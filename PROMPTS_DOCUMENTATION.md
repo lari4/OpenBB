@@ -152,3 +152,287 @@ Best Practices:
 - Tagged with "server" category automatically
 
 ---
+
+## MCP Server Financial Analysis Prompts
+
+These are concrete examples of workflow prompts that guide AI agents through complex financial analysis tasks using multiple OpenBB tools.
+
+### 1. Equity Analysis Workflow Prompt
+
+**Location:** Server prompts configuration file (example from documentation)
+
+**Purpose:** Guides AI agents through a comprehensive equity analysis process, combining multiple data sources including price performance, fundamental data, news, analyst estimates, and peer comparisons.
+
+**Workflow Steps:**
+1. Get basic stock quote and recent price performance
+2. Retrieve fundamental data (financial statements, ratios, key metrics)
+3. Gather recent news and analyst estimates
+4. Compare valuation metrics with industry peers
+5. Summarize findings with investment recommendation
+
+**Parameters:**
+- `symbol` (str, required) - Stock ticker symbol to analyze
+- `analysis_period` (str, default: "last 12 months") - Time period for analysis
+- `focus_areas` (str, default: "growth, profitability, valuation") - Specific analysis areas
+- `risk_tolerance` (str, default: "moderate") - Risk tolerance level
+
+**Tags:** equity, analysis, comprehensive
+
+**Prompt:**
+```json
+{
+  "name": "equity_analysis",
+  "description": "Perform a comprehensive equity analysis using multiple data sources and metrics",
+  "content": "Conduct a comprehensive analysis of {symbol} for {analysis_period}. Follow this workflow:\n1. First, get basic stock quote and recent price performance using equity_price_performance.\n2. Retrieve fundamental data including financial statements, ratios, and key metrics using [equity_fundamental_ratios, equity_fundamental_metrics, equity_fundamental_balance].\n3. Gather recent news and analyst estimates for the company using [news_company, equity_estimates_price_target].\n4. Compare valuation metrics with industry peers using equity_compare_peers.\n5. Summarize findings with investment recommendation.\n\nFocus areas: {focus_areas}\nRisk tolerance: {risk_tolerance}",
+  "arguments": [
+    {
+      "name": "symbol",
+      "type": "str",
+      "description": "Stock ticker symbol to analyze (e.g., AAPL, TSLA)"
+    },
+    {
+      "name": "analysis_period",
+      "type": "str",
+      "default": "last 12 months",
+      "description": "Time period for the analysis"
+    },
+    {
+      "name": "focus_areas",
+      "type": "str",
+      "default": "growth, profitability, valuation",
+      "description": "Specific areas to focus on in the analysis"
+    },
+    {
+      "name": "risk_tolerance",
+      "type": "str",
+      "default": "moderate",
+      "description": "Risk tolerance level: conservative, moderate, or aggressive"
+    }
+  ],
+  "tags": ["equity", "analysis", "comprehensive"]
+}
+```
+
+**Usage Example:**
+```json
+{
+  "prompt_name": "equity_analysis",
+  "arguments": {
+    "symbol": "AAPL",
+    "analysis_period": "last 24 months",
+    "focus_areas": "growth, innovation, market share",
+    "risk_tolerance": "aggressive"
+  }
+}
+```
+
+### 2. GDP Summary Prompt (Inline Route Prompt)
+
+**Location:** Inline route prompt example (`/economy/gdp` endpoint)
+
+**Purpose:** Generates a concise summary of GDP data for a specific country over a specified time period. This is an example of an inline prompt attached to a specific API endpoint.
+
+**Associated Tools:** `economy_gdp`
+
+**Parameters:**
+- `country` (str, required via endpoint) - Country name
+- `years` (int, default: 5) - Number of years to summarize
+
+**Tags:** economy, gdp, summary
+
+**Prompt:**
+```json
+{
+  "name": "gdp_summary_prompt",
+  "description": "Generate a brief summary of GDP for a country.",
+  "content": "Provide a concise summary of the GDP for {country} over the last {years} years.",
+  "arguments": [
+    {
+      "name": "years",
+      "type": "int",
+      "default": 5,
+      "description": "Number of years to summarize."
+    }
+  ],
+  "tags": ["economy", "gdp", "summary"]
+}
+```
+
+**Implementation Context:**
+```python
+@app.get(
+    "/economy/gdp",
+    openapi_extra={
+        "mcp_config": {
+            "prompts": [{
+                "name": "gdp_summary_prompt",
+                "description": "Generate a brief summary of GDP for a country.",
+                "content": "Provide a concise summary of the GDP for {country} over the last {years} years.",
+                "arguments": [
+                    {
+                        "name": "years",
+                        "type": "int",
+                        "default": 5,
+                        "description": "Number of years to summarize."
+                    }
+                ],
+                "tags": ["economy", "gdp", "summary"]
+            }]
+        }
+    }
+)
+def get_gdp_data(country: str, period: Literal["annual", "quarterly"] = "annual"):
+    """Get GDP data for a specific country."""
+    return {"country": country, "period": period}
+```
+
+**Execution Example:**
+```json
+{
+  "prompt_name": "gdp_summary_prompt",
+  "arguments": {
+    "years": 10,
+    "country": "Japan"
+  }
+}
+```
+
+**Rendered Output:**
+```json
+{
+  "description": "Generate a brief summary of GDP for a country.",
+  "messages": [
+    {
+      "role": "user",
+      "content": {
+        "type": "text",
+        "text": "Use the tool, economy_gdp, to perform the following task.\n\nProvide a concise summary of the GDP for Japan over the last 10 years."
+      }
+    }
+  ]
+}
+```
+
+### 3. GDP Comparison Prompt (Inline Route Prompt)
+
+**Location:** Inline route prompt example (`/economy/gdp` endpoint)
+
+**Purpose:** Compares GDP growth between two countries, facilitating comparative economic analysis.
+
+**Associated Tools:** `economy_gdp`
+
+**Parameters:**
+- `country1` (str, required) - First country for comparison
+- `country2` (str, required) - Second country for comparison
+
+**Tags:** economy, gdp, comparison
+
+**Prompt:**
+```json
+{
+  "name": "gdp_comparison_prompt",
+  "description": "Compare the GDP of two countries.",
+  "content": "Compare the GDP growth of {country1} and {country2}.",
+  "arguments": [
+    {
+      "name": "country1",
+      "type": "str",
+      "description": "First country for comparison."
+    },
+    {
+      "name": "country2",
+      "type": "str",
+      "description": "Second country for comparison."
+    }
+  ],
+  "tags": ["economy", "gdp", "comparison"]
+}
+```
+
+**Implementation Context:**
+```python
+@app.get(
+    "/economy/gdp",
+    openapi_extra={
+        "mcp_config": {
+            "prompts": [
+                # ... gdp_summary_prompt ...
+                {
+                    "name": "gdp_comparison_prompt",
+                    "description": "Compare the GDP of two countries.",
+                    "content": "Compare the GDP growth of {country1} and {country2}.",
+                    "arguments": [
+                        {
+                            "name": "country1",
+                            "type": "str",
+                            "description": "First country for comparison."
+                        },
+                        {
+                            "name": "country2",
+                            "type": "str",
+                            "description": "Second country for comparison."
+                        }
+                    ],
+                    "tags": ["economy", "gdp", "comparison"]
+                }
+            ]
+        }
+    }
+)
+```
+
+### 4. Prompt Template Rendering System
+
+**Location:** `openbb_mcp_server/models/prompts.py`
+
+**Purpose:** The `StaticPrompt` class provides the underlying mechanism for rendering prompt templates with user-provided arguments. It validates required arguments and formats the template content.
+
+**Key Features:**
+- Argument validation (required vs optional)
+- Template variable substitution using Python's `.format()` method
+- Error handling for missing or invalid arguments
+- Returns MCP-compatible `PromptMessage` structures
+
+**Implementation:**
+```python
+class StaticPrompt(Prompt):
+    """A prompt that is a static string template."""
+
+    content: str
+
+    async def render(
+        self,
+        arguments: dict[str, Any] | None = None,
+    ) -> list[PromptMessage]:
+        """Render the prompt with arguments."""
+        args = arguments or {}
+
+        # Validate required arguments
+        if self.arguments:
+            required = {arg.name for arg in self.arguments if arg.required}
+            provided = set(args)
+            missing = required - provided
+            if missing:
+                raise PromptError(f"Missing required arguments: {missing}")
+
+        try:
+            rendered_content = self.content.format(**args)
+            return [
+                PromptMessage(
+                    role="user",
+                    content=TextContent(type="text", text=rendered_content)
+                )
+            ]
+        except KeyError as e:
+            raise PromptError(f"Missing argument for formatting: {e}") from e
+```
+
+**Usage in MCP Server:**
+When an AI agent calls `execute_prompt`, the server:
+1. Looks up the prompt by name
+2. Merges user-provided arguments with default values
+3. Validates required arguments are present
+4. Renders the template with the StaticPrompt.render() method
+5. Returns the formatted message to the agent
+
+---
