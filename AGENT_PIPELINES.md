@@ -147,3 +147,211 @@ CLI Arguments > Environment Variables > Config File > Defaults
 ```
 
 ---
+
+## Tool Discovery Pipeline
+
+### Overview
+
+The Tool Discovery Pipeline enables AI agents to explore available financial data tools dynamically. Instead of being overwhelmed with 100+ tools at once, agents can discover categories, examine subcategories, and activate only the tools they need for specific tasks.
+
+### Pipeline Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Tool Discovery Workflow                         │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                   Agent starts with minimal tools
+                   (only "admin" category enabled)
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Step 1: Call available_categories()     │
+        │                                          │
+        │  Agent → MCP Server                      │
+        │  Tool: available_categories              │
+        │  Input: None                             │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Server Response                         │
+        │  Returns list of CategoryInfo:           │
+        │                                          │
+        │  [                                       │
+        │    {                                     │
+        │      "name": "equity",                   │
+        │      "total_tools": 45,                  │
+        │      "subcategories": [                  │
+        │        {"name": "price", "tool_count": 8}│
+        │        {"name": "fundamental", ...}      │
+        │      ]                                   │
+        │    },                                    │
+        │    {"name": "economy", ...},             │
+        │    {"name": "crypto", ...}               │
+        │  ]                                       │
+        └──────────────────────────────────────────┘
+                                  │
+                   Agent analyzes categories and
+                   decides which to explore further
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Step 2: Call available_tools()          │
+        │                                          │
+        │  Agent → MCP Server                      │
+        │  Tool: available_tools                   │
+        │  Input:                                  │
+        │    category: "equity"                    │
+        │    subcategory: "price" (optional)       │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Server Response                         │
+        │  Returns list of ToolInfo:               │
+        │                                          │
+        │  [                                       │
+        │    {                                     │
+        │      "name": "equity_price_quote",       │
+        │      "active": false,                    │
+        │      "description": "Get current quote"  │
+        │    },                                    │
+        │    {                                     │
+        │      "name": "equity_price_historical",  │
+        │      "active": false,                    │
+        │      "description": "Get historical..."  │
+        │    }                                     │
+        │  ]                                       │
+        └──────────────────────────────────────────┘
+                                  │
+                   Agent identifies needed tools
+                                  │
+                                  ▼
+                    ┌────────────────────────┐
+                    │  Discovery Complete    │
+                    │  Ready to Activate     │
+                    └────────────────────────┘
+```
+
+### Tool Registry Structure
+
+```
+ToolRegistry
+├── categories/
+│   ├── equity/
+│   │   ├── price/
+│   │   │   ├── equity_price_quote → OpenAPITool
+│   │   │   ├── equity_price_historical → OpenAPITool
+│   │   │   └── equity_price_performance → OpenAPITool
+│   │   ├── fundamental/
+│   │   │   ├── equity_fundamental_ratios → OpenAPITool
+│   │   │   ├── equity_fundamental_metrics → OpenAPITool
+│   │   │   └── equity_fundamental_balance → OpenAPITool
+│   │   └── estimates/
+│   │       ├── equity_estimates_price_target → OpenAPITool
+│   │       └── equity_estimates_consensus → OpenAPITool
+│   ├── economy/
+│   │   ├── general/
+│   │   │   ├── economy_gdp → OpenAPITool
+│   │   │   ├── economy_cpi → OpenAPITool
+│   │   │   └── economy_unemployment → OpenAPITool
+│   │   └── indicators/
+│   │       └── ...
+│   ├── crypto/
+│   │   └── ...
+│   └── news/
+│       └── ...
+└── enabled_tools: Set[str]  # Currently active tools
+```
+
+### Data Flow
+
+**Request: available_categories()**
+```python
+# Agent calls
+available_categories()
+
+# Server executes
+def available_categories() -> list[CategoryInfo]:
+    categories = tool_registry.get_categories()
+    return [
+        CategoryInfo(
+            name=category_name,
+            subcategories=[
+                SubcategoryInfo(name=subcat_name, tool_count=len(tools))
+                for subcat_name, tools in sorted(subcategories.items())
+            ],
+            total_tools=sum(len(tools) for tools in subcategories.values())
+        )
+        for category_name, subcategories in sorted(categories.items())
+    ]
+
+# Returns structured category overview
+```
+
+**Request: available_tools(category, subcategory)**
+```python
+# Agent calls
+available_tools(category="equity", subcategory="price")
+
+# Server executes
+def available_tools(category: str, subcategory: str = None) -> list[ToolInfo]:
+    # Get category data
+    category_data = tool_registry.get_category_subcategories(category)
+
+    # If category not found, return error with available categories
+    if not category_data:
+        raise ValueError(f"Category '{category}' not found...")
+
+    # Filter by subcategory if provided
+    if subcategory:
+        tools_dict = tool_registry.get_category_tools(category, subcategory)
+        if not tools_dict:
+            raise ValueError(f"Subcategory '{subcategory}' not found...")
+    else:
+        tools_dict = tool_registry.get_category_tools(category)
+
+    # Return tool information
+    return [
+        ToolInfo(
+            name=name,
+            active=tool.enabled,
+            description=_extract_brief_description(tool.description or "")
+        )
+        for name, tool in sorted(tools_dict.items())
+    ]
+
+# Returns list of tools with activation status
+```
+
+### Use Case Example
+
+**Scenario:** Agent needs to analyze Apple stock
+
+```
+1. Agent: available_categories()
+   → Sees "equity" category with 45 tools
+
+2. Agent: available_tools(category="equity")
+   → Sees subcategories: "price", "fundamental", "estimates"
+
+3. Agent: available_tools(category="equity", subcategory="price")
+   → Finds: equity_price_quote, equity_price_historical, equity_price_performance
+
+4. Agent: available_tools(category="equity", subcategory="fundamental")
+   → Finds: equity_fundamental_ratios, equity_fundamental_metrics
+
+5. Agent decides which tools to activate based on task requirements
+   → Proceeds to Tool Activation Pipeline
+```
+
+### Key Features
+
+- **Progressive Discovery:** Agents explore in stages (category → subcategory → tools)
+- **Error Handling:** Helpful error messages with available options
+- **Tool Metadata:** Each tool includes name, activation status, and description
+- **Filtered Views:** Subcategory filtering reduces information overload
+- **Dynamic State:** Tool activation status reflects current server state
+
+---
