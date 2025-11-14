@@ -607,3 +607,784 @@ openbb-mcp --no-tool-discovery --default-categories equity,news,economy
 ```
 
 ---
+
+## Prompt Execution Pipeline
+
+### Overview
+
+The Prompt Execution Pipeline enables agents to execute pre-configured workflow prompts that guide them through multi-step financial analysis tasks. Prompts act as structured templates with variable substitution, combining multiple tools into coherent workflows.
+
+### Pipeline Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Prompt Execution Pipeline                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+           Agent wants to execute a workflow
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Step 1: Discover Available Prompts      │
+        │                                          │
+        │  Agent → MCP Server                      │
+        │  Tool: list_prompts()                    │
+        │  Input: None                             │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Server Response                         │
+        │  Returns list of prompts:                │
+        │                                          │
+        │  [                                       │
+        │    {                                     │
+        │      "name": "equity_analysis",          │
+        │      "tags": ["equity", "server"],       │
+        │      "arguments": [                      │
+        │        {                                 │
+        │          "name": "symbol",               │
+        │          "description": "Ticker symbol", │
+        │          "required": true                │
+        │        },                                │
+        │        {                                 │
+        │          "name": "analysis_period",      │
+        │          "description": "Time period",   │
+        │          "required": false               │
+        │        }                                 │
+        │      ]                                   │
+        │    },                                    │
+        │    {...}                                 │
+        │  ]                                       │
+        └──────────────────────────────────────────┘
+                                  │
+            Agent selects appropriate prompt
+            and prepares arguments
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Step 2: Execute Prompt                  │
+        │                                          │
+        │  Agent → MCP Server                      │
+        │  Tool: execute_prompt                    │
+        │  Input:                                  │
+        │    prompt_name: "equity_analysis"        │
+        │    arguments: {                          │
+        │      "symbol": "AAPL",                   │
+        │      "analysis_period": "last 24 months",│
+        │      "focus_areas": "growth, innovation" │
+        │    }                                     │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Server Processing                       │
+        │                                          │
+        │  1. Lookup prompt definition             │
+        │  2. Merge provided + default arguments   │
+        │  3. Validate required arguments          │
+        │  4. Render template with arguments       │
+        │  5. Return formatted prompt message      │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Argument Merging Example                │
+        │                                          │
+        │  Provided: {                             │
+        │    "symbol": "AAPL",                     │
+        │    "analysis_period": "last 24 months"   │
+        │  }                                       │
+        │                                          │
+        │  Defaults: {                             │
+        │    "analysis_period": "last 12 months",  │
+        │    "focus_areas": "growth, profit..."    │
+        │    "risk_tolerance": "moderate"          │
+        │  }                                       │
+        │                                          │
+        │  Final: {                                │
+        │    "symbol": "AAPL",                     │
+        │    "analysis_period": "last 24 months",  │
+        │    "focus_areas": "growth, profit...",   │
+        │    "risk_tolerance": "moderate"          │
+        │  }                                       │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Template Rendering                      │
+        │                                          │
+        │  Template:                               │
+        │  "Conduct analysis of {symbol} for      │
+        │   {analysis_period}. Follow workflow:    │
+        │   1. Get price using equity_price...     │
+        │   2. Get fundamentals using equity_...   │
+        │   ..."                                   │
+        │                                          │
+        │  Rendered:                               │
+        │  "Conduct analysis of AAPL for last     │
+        │   24 months. Follow workflow:            │
+        │   1. Get price using equity_price...     │
+        │   2. Get fundamentals using equity_...   │
+        │   ..."                                   │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Server Response                         │
+        │                                          │
+        │  PromptResult {                          │
+        │    description: "Perform comprehensive   │
+        │                  equity analysis...",    │
+        │    messages: [                           │
+        │      {                                   │
+        │        role: "user",                     │
+        │        content: {                        │
+        │          type: "text",                   │
+        │          text: "Conduct analysis of      │
+        │                 AAPL for last 24..."     │
+        │        }                                 │
+        │      }                                   │
+        │    ]                                     │
+        │  }                                       │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Agent Executes Workflow                 │
+        │                                          │
+        │  1. Activates required tools             │
+        │     (equity_price_quote, etc.)           │
+        │  2. Executes steps from prompt           │
+        │  3. Collects data from tools             │
+        │  4. Synthesizes analysis                 │
+        │  5. Returns result to user               │
+        │  6. Deactivates tools                    │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+                    ┌────────────────────────┐
+                    │  Workflow Complete     │
+                    └────────────────────────┘
+```
+
+### Prompt Types
+
+**1. System Prompts (resource://system_prompt)**
+- Single static text file
+- Provides agent orientation and guidelines
+- Not executed, retrieved as resource
+- Tags: `{system}`
+
+**2. Server Prompts (loaded from JSON)**
+- Pre-configured workflow templates
+- Stored in external JSON file
+- Tags: `{server}` + custom tags
+- Examples: equity_analysis, portfolio_analysis
+
+**3. Inline/Route-Specific Prompts**
+- Embedded in API endpoint metadata
+- Specific to individual tools
+- Tags: `{route-specific}` + tool name
+- Examples: gdp_summary_prompt, gdp_comparison_prompt
+
+### Implementation
+
+**list_prompts() Function:**
+```python
+@mcp.tool(tags={"prompt"})
+async def list_prompts() -> list:
+    """List all available prompts."""
+    prompts = await mcp.get_prompts()
+
+    return [
+        {
+            "name": p.name,
+            "tags": p.tags,
+            "arguments": p.arguments
+        }
+        for p in prompts.values()
+    ]
+```
+
+**execute_prompt() Function:**
+```python
+@mcp.tool(tags={"prompt"})
+async def execute_prompt(
+    prompt_name: Annotated[str, Field(description="Prompt name")],
+    arguments: Annotated[dict, Field(description="Prompt arguments")],
+) -> PromptResult:
+    """Execute a prompt by name."""
+
+    # Find prompt definition (server or inline)
+    prompt_def = find_prompt_definition(prompt_name)
+
+    if prompt_def:
+        # Merge user arguments with defaults
+        processed_args = arguments.copy()
+        for arg_def in prompt_def.get("arguments", []):
+            arg_name = arg_def.get("name")
+            if "default" in arg_def and arg_name not in processed_args:
+                processed_args[arg_name] = arg_def["default"]
+
+        # Render prompt with merged arguments
+        return await mcp._prompt_manager.render_prompt(
+            name=prompt_name,
+            arguments=processed_args
+        )
+
+    # Render with provided arguments only
+    return await mcp._prompt_manager.render_prompt(
+        name=prompt_name,
+        arguments=arguments
+    )
+```
+
+**StaticPrompt.render() Method:**
+```python
+class StaticPrompt(Prompt):
+    content: str
+
+    async def render(
+        self,
+        arguments: dict[str, Any] | None = None,
+    ) -> list[PromptMessage]:
+        """Render the prompt with arguments."""
+        args = arguments or {}
+
+        # Validate required arguments
+        if self.arguments:
+            required = {arg.name for arg in self.arguments if arg.required}
+            provided = set(args)
+            missing = required - provided
+            if missing:
+                raise PromptError(f"Missing required arguments: {missing}")
+
+        try:
+            # Template substitution using Python's .format()
+            rendered_content = self.content.format(**args)
+            return [
+                PromptMessage(
+                    role="user",
+                    content=TextContent(type="text", text=rendered_content)
+                )
+            ]
+        except KeyError as e:
+            raise PromptError(f"Missing argument for formatting: {e}") from e
+```
+
+### Use Case Examples
+
+**Example 1: Equity Analysis**
+```
+Agent: list_prompts()
+→ Sees "equity_analysis" prompt
+
+Agent: execute_prompt(
+    prompt_name="equity_analysis",
+    arguments={"symbol": "TSLA", "risk_tolerance": "aggressive"}
+)
+
+Server: Returns rendered prompt:
+"Conduct comprehensive analysis of TSLA for last 12 months.
+Follow this workflow:
+1. Get price performance using equity_price_performance
+2. Get fundamental data using equity_fundamental_ratios
+3. Get news using news_company
+4. Compare with peers using equity_compare_peers
+5. Summarize with investment recommendation
+Focus areas: growth, profitability, valuation
+Risk tolerance: aggressive"
+
+Agent: Follows workflow steps, using tools as directed
+```
+
+**Example 2: GDP Comparison**
+```
+Agent: execute_prompt(
+    prompt_name="gdp_comparison_prompt",
+    arguments={"country1": "USA", "country2": "China"}
+)
+
+Server: Returns rendered prompt:
+"Use the tool, economy_gdp, to perform the following task.
+
+Compare the GDP growth of USA and China."
+
+Agent: Activates economy_gdp tool and fetches data
+```
+
+---
+
+## Financial Analysis Workflow Pipeline
+
+### Overview
+
+This pipeline demonstrates a complete end-to-end financial analysis workflow combining tool discovery, activation, prompt execution, and data synthesis. It represents a typical agent workflow when performing comprehensive stock analysis.
+
+### Complete Workflow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│             Complete Financial Analysis Workflow                    │
+│                  (End-to-End Example)                               │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+              User: "Analyze Apple stock (AAPL)"
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                      Phase 1: Initialization                      ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  Agent starts with minimal context       │
+        │  Enabled tools: [admin tools only]       │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                    Phase 2: Tool Discovery                        ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  1. Call: available_categories()         │
+        │     Response: [equity, news, economy...] │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  2. Call: available_tools("equity")      │
+        │     Response: Subcategories discovered   │
+        │     - price (8 tools)                    │
+        │     - fundamental (12 tools)             │
+        │     - estimates (5 tools)                │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  3. Call: available_tools("news")        │
+        │     Response: News tools discovered      │
+        │     - news_company (1 tool)              │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                   Phase 3: Tool Activation                        ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  Call: activate_tools([                  │
+        │    "equity_price_quote",                 │
+        │    "equity_price_performance",           │
+        │    "equity_fundamental_ratios",          │
+        │    "equity_fundamental_metrics",         │
+        │    "equity_estimates_price_target",      │
+        │    "news_company"                        │
+        │  ])                                      │
+        │                                          │
+        │  Response: "Successfully activated 6     │
+        │            tools..."                     │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                   Phase 4: Data Collection                        ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  1. Call: equity_price_quote("AAPL")     │
+        │     Data: Current price, volume, market  │
+        │           cap, P/E ratio                 │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  2. Call: equity_price_performance(      │
+        │            "AAPL", period="1Y")          │
+        │     Data: 1-year return, volatility,     │
+        │           highs, lows                    │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  3. Call: equity_fundamental_ratios(     │
+        │            "AAPL")                       │
+        │     Data: ROE, ROA, profit margins,      │
+        │           debt ratios                    │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  4. Call: equity_fundamental_metrics(    │
+        │            "AAPL")                       │
+        │     Data: Revenue, earnings, cash flow   │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  5. Call: equity_estimates_price_target( │
+        │            "AAPL")                       │
+        │     Data: Analyst targets, consensus     │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  6. Call: news_company("AAPL")           │
+        │     Data: Recent news articles           │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                   Phase 5: Analysis & Synthesis                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  Agent analyzes collected data:          │
+        │                                          │
+        │  - Price: $175.50, Up 45% YoY            │
+        │  - Fundamentals: Strong margins, low debt│
+        │  - Estimates: PT $200 (14% upside)       │
+        │  - News: Product launch, positive        │
+        │                                          │
+        │  Synthesis: Strong buy recommendation    │
+        │  based on growth, fundamentals, and      │
+        │  analyst consensus                       │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                   Phase 6: Response & Cleanup                     ║
+╚═══════════════════════════════════════════════════════════════════╝
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  Agent → User:                           │
+        │  "Apple (AAPL) Analysis Summary:         │
+        │   Current Price: $175.50                 │
+        │   1-Year Return: +45%                    │
+        │   Analyst Target: $200 (14% upside)      │
+        │   Recommendation: Strong Buy             │
+        │   Rationale: Strong fundamentals,        │
+        │   positive analyst sentiment, recent     │
+        │   product innovation..."                 │
+        └──────────────────────────────────────────┘
+                                  │
+        ┌──────────────────────────────────────────┐
+        │  Call: deactivate_tools([all 6 tools])   │
+        │  Response: "Successfully deactivated..." │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+                    ┌────────────────────────┐
+                    │  Analysis Complete     │
+                    │  Context Cleaned Up    │
+                    └────────────────────────┘
+```
+
+### Workflow Sequence Details
+
+**Phase 1: Initialization**
+- Agent starts fresh with only admin tools
+- Receives user request for analysis
+
+**Phase 2: Tool Discovery**
+- Progressively explores available tools
+- Identifies relevant categories (equity, news)
+- Examines subcategories within equity
+
+**Phase 3: Tool Activation**
+- Selects specific tools needed for analysis
+- Activates them in a single batch call
+- Receives confirmation of activation
+
+**Phase 4: Data Collection**
+- Executes tools in logical sequence
+- Collects price, fundamental, estimate, and news data
+- Each tool returns structured financial data
+
+**Phase 5: Analysis & Synthesis**
+- Processes collected data
+- Identifies patterns and insights
+- Formulates investment recommendation
+
+**Phase 6: Response & Cleanup**
+- Delivers structured analysis to user
+- Deactivates tools to free context
+- Returns to minimal tool state
+
+### Alternative: Prompt-Guided Workflow
+
+Instead of manually orchestrating tools, the agent could use a pre-configured prompt:
+
+```
+Agent: execute_prompt(
+    prompt_name="equity_analysis",
+    arguments={
+        "symbol": "AAPL",
+        "analysis_period": "last 12 months",
+        "risk_tolerance": "moderate"
+    }
+)
+
+Server: Returns structured workflow instructions
+
+Agent: Follows prompt's workflow:
+  1. equity_price_performance("AAPL") → Price data
+  2. equity_fundamental_ratios("AAPL") → Fundamentals
+  3. equity_estimates_price_target("AAPL") → Targets
+  4. news_company("AAPL") → News
+  5. Synthesize → Recommendation
+
+Result: Same analysis with less manual orchestration
+```
+
+---
+
+## LangChain Agent Pipeline
+
+### Overview
+
+The LangChain pipeline demonstrates an alternative agent architecture using OpenAI's function calling with LangChain's agent framework. Unlike MCP's dynamic tool discovery, this approach uses pre-configured tools with chain-of-thought reasoning.
+
+### Pipeline Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    LangChain Agent Architecture                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  Components Layer                                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │   LLM Core   │  │    Memory    │  │     Tools    │             │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤             │
+│  │ OpenAI GPT-4 │  │ Conversation │  │ OpenBB Tools │             │
+│  │ Temperature:0│  │ Token Buffer │  │ (8 custom)   │             │
+│  └──────────────┘  │ 16K tokens   │  └──────────────┘             │
+│                    └──────────────┘                                │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Agent Layer                                                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ChatPromptTemplate                                                 │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ System: "You are very powerful stock financial researcher..." │  │
+│  │ Memory: {chat_history}                                        │  │
+│  │ User: {input}                                                 │  │
+│  │ Scratchpad: {agent_scratchpad}                                │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│  OpenAI Tools Agent + AgentExecutor                                 │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Execution Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  LangChain Execution Flow                           │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+              User provides complex prompt
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  User Input (Chain-of-Thought Prompt)    │
+        │                                          │
+        │  "First, find an industry with positive  │
+        │   performance across quarterly, monthly, │
+        │   and weekly timeframes.                 │
+        │   Second, extract valuation metrics...   │
+        │   Third, extract companies using         │
+        │   relaxed criteria...                    │
+        │   Fourth, get analyst consensus...       │
+        │   Finally, summarize findings..."        │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Agent Processing Loop                   │
+        │                                          │
+        │  1. LLM receives prompt + system message │
+        │  2. LLM reasons about next action        │
+        │  3. LLM selects tool to call             │
+        │  4. Agent Executor calls tool            │
+        │  5. Tool returns data to LLM             │
+        │  6. LLM updates reasoning (scratchpad)   │
+        │  7. Repeat until task complete           │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                    Iteration 1: Find Best Industry                ║
+╚═══════════════════════════════════════════════════════════════════╝
+        │
+        ├─> LLM Reasoning: "Need industry performance data"
+        │
+        ├─> Tool Call: get_industry_performance()
+        │
+        ├─> Tool Response: [
+        │     {industry: "Semiconductors", week: +5%, month: +8%, ...},
+        │     {industry: "Software", week: +3%, month: +6%, ...}
+        │   ]
+        │
+        └─> LLM: "Semiconductors shows best performance"
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                 Iteration 2: Get Valuation Metrics                ║
+╚═══════════════════════════════════════════════════════════════════╝
+        │
+        ├─> LLM Reasoning: "Need valuation for Semiconductors"
+        │
+        ├─> Tool Call: get_valuation_for_industries("Semiconductors")
+        │
+        ├─> Tool Response: {
+        │     PE: 28.5, PB: 6.2, EV_EBITDA: 18.3
+        │   }
+        │
+        └─> LLM: "Stored valuation metrics"
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║              Iteration 3: Screen Investment Candidates            ║
+╚═══════════════════════════════════════════════════════════════════╝
+        │
+        ├─> LLM Reasoning: "Need companies in Semiconductors"
+        │
+        ├─> Tool Call: get_candidate_stocks_to_invest_relaxed(
+        │       "Semiconductors"
+        │     )
+        │
+        ├─> Tool Response: [
+        │     {symbol: "NVDA", name: "NVIDIA Corp", ...},
+        │     {symbol: "AMD", name: "Advanced Micro...", ...}
+        │   ]
+        │
+        └─> LLM: "Found top performers: NVDA, AMD"
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                Iteration 4: Get Analyst Consensus                 ║
+╚═══════════════════════════════════════════════════════════════════╝
+        │
+        ├─> LLM Reasoning: "Need consensus for NVDA"
+        │
+        ├─> Tool Call: get_consensus("NVDA")
+        │
+        ├─> Tool Response: {
+        │     target_high: 1200, target_low: 950,
+        │     target_consensus: 1050, target_median: 1040
+        │   }
+        │
+        ├─> LLM Reasoning: "Need consensus for AMD"
+        │
+        ├─> Tool Call: get_consensus("AMD")
+        │
+        ├─> Tool Response: {
+        │     target_high: 280, target_low: 200,
+        │     target_consensus: 240, target_median: 235
+        │   }
+        │
+        └─> LLM: "Have all required data"
+                                  │
+                                  ▼
+╔═══════════════════════════════════════════════════════════════════╗
+║                    Iteration 5: Synthesize Answer                 ║
+╚═══════════════════════════════════════════════════════════════════╝
+        │
+        └─> LLM Reasoning: "All data collected, can now summarize"
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Final Response                          │
+        │                                          │
+        │  "Best Performing Industry:              │
+        │   Semiconductors                         │
+        │                                          │
+        │  Valuation: PE 28.5, PB 6.2              │
+        │                                          │
+        │  Top Companies:                          │
+        │  - NVDA: Target $1050 (8% upside)        │
+        │  - AMD: Target $240 (15% upside)         │
+        │                                          │
+        │  Recommendation: Both show strong        │
+        │  analyst support with moderate upside    │
+        │  potential. Consider AMD for higher      │
+        │  risk/reward profile."                   │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+        ┌──────────────────────────────────────────┐
+        │  Memory Update                           │
+        │  - Stores conversation in buffer         │
+        │  - Maintains context for follow-ups      │
+        │  - Respects 16K token limit              │
+        └──────────────────────────────────────────┘
+                                  │
+                                  ▼
+                    ┌────────────────────────┐
+                    │  Agent Ready for Next  │
+                    │  User Query            │
+                    └────────────────────────┘
+```
+
+### Key Differences from MCP Pipeline
+
+| Aspect | MCP Server | LangChain |
+|--------|------------|-----------|
+| **Tool Discovery** | Dynamic (100+ tools, activate on demand) | Static (8 pre-configured tools) |
+| **Tool Management** | activate_tools/deactivate_tools | All tools always available |
+| **Prompts** | Structured templates with execute_prompt | Embedded in ChatPromptTemplate |
+| **Memory** | Stateless (per MCP session) | ConversationTokenBufferMemory |
+| **Reasoning** | Agent-directed workflows | Chain-of-thought prompting |
+| **Best For** | Multiple agents, discovery workflows | Single-session analysis |
+
+### Tool Definitions
+
+**Available Tools:**
+1. `get_industry_performance()` - Industry performance metrics
+2. `get_strong_buy_for_sector(sector)` - Strong buy recommendations
+3. `get_strong_buy_for_industry(industry)` - Industry-specific buys
+4. `get_valuation_for_industries(industry)` - Valuation metrics
+5. `get_candidate_stocks_to_invest_relaxed(industry)` - Stock screening
+6. `get_consensus(ticker)` - Analyst consensus
+
+### Conversation Flow Example
+
+```python
+# First interaction
+agent_executor.invoke({
+    "input": "Find best performing industry and top stocks",
+    "chat_history": []
+})
+
+# Follow-up (memory preserved)
+agent_executor.invoke({
+    "input": "What about the Utilities sector?",
+    "chat_history": previous_chat_history
+})
+
+# Agent remembers context from previous analysis
+# and can reference it in new response
+```
+
+---
+
+## Summary
+
+OpenBB provides multiple AI agent pipeline architectures:
+
+### MCP Server Pipelines (Primary)
+1. **Initialization Pipeline** - Server setup, tool registration, prompt loading
+2. **Tool Discovery Pipeline** - Progressive exploration of 100+ tools
+3. **Tool Activation Pipeline** - Dynamic context management
+4. **Prompt Execution Pipeline** - Structured workflow templates
+5. **Financial Analysis Workflow** - End-to-end equity analysis example
+
+### LangChain Pipeline (Example)
+6. **LangChain Agent Pipeline** - Chain-of-thought with memory
+
+Each pipeline serves specific use cases:
+- **MCP** for multi-agent, discoverable, workflow-driven analysis
+- **LangChain** for single-session, memory-based, conversational analysis
+
+Both approaches leverage OpenBB's comprehensive financial data platform while providing different agent interaction paradigms.
