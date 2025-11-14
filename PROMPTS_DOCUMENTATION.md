@@ -436,3 +436,278 @@ When an AI agent calls `execute_prompt`, the server:
 5. Returns the formatted message to the agent
 
 ---
+
+## LangChain Integration Prompts
+
+The LangChain integration demonstrates how OpenBB can be used as a tool provider for LangChain agents, enabling chain-of-thought reasoning and multi-step financial analysis workflows.
+
+### Architecture Overview
+
+**Location:** `examples/openbb_vs_langchain.ipynb`
+
+**AI Model:** OpenAI GPT-4.1
+
+**Components:**
+- **LLM:** ChatOpenAI with temperature=0 for deterministic responses
+- **Tools:** Custom OpenBB-powered tools decorated with `@tool`
+- **Memory:** ConversationTokenBufferMemory (16,000 token limit)
+- **Agent:** OpenAI Tools Agent with conversation history
+- **Executor:** AgentExecutor for managing tool calls and reasoning
+
+### 1. System Prompt for Stock Financial Researcher
+
+**Location:** `examples/openbb_vs_langchain.ipynb` (ChatPromptTemplate)
+
+**Purpose:** Establishes the AI agent as a stock financial researcher with access to specific OpenBB tools. Guides the agent on how to use tools efficiently and when to call them.
+
+**Role:** System-level instruction
+
+**Key Directives:**
+- Take user questions and answer using available tools
+- Use returned data to formulate answers
+- Call each function only once
+- Don't call functions if information is already available
+
+**Prompt:**
+```python
+"""You are very powerful stock financial researcher.
+You will take the user questions and answer using the tools available.
+Once you have the information you need, you will answer user's questions using the data returned.
+Use the following tools to answer user queries:
+- get_strong_buy_for_sector to find strong buy recommendations for a sector
+- get_strong_buy_for_industry to find strong buy recommendations for an industry
+- get_industry_performance to find the performance for an industry
+- get_valuation_for_industries to find valuation metrics for industries
+- get_candidate_stocks_to_invest_relaxed to fetch all companies using relaxed criteria
+- get_consensus(ticker:str) - to find analyst consensus for a company
+You should call each function only once, and you should not call the function if you already have the information you need."""
+```
+
+**Implementation Context:**
+```python
+MEMORY_KEY = "chat_history"
+prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are very powerful stock financial researcher..."""),
+    MessagesPlaceholder(variable_name=MEMORY_KEY),
+    ("user", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
+])
+```
+
+### 2. Available Custom Tools
+
+The LangChain agent has access to the following OpenBB-powered tools:
+
+#### Tool: get_industry_performance
+**Purpose:** Return performance metrics by industry across multiple timeframes
+**Returns:** Performance data for last week, month, quarter, half year, and year
+**Implementation:**
+```python
+@tool
+def get_industry_performance() -> list:
+    """Return performance by industry for last week, last month, last quarter,
+    last half year and last year"""
+    return obb.equity.compare.groups(group='industry', metric='performance').to_llm()
+```
+
+#### Tool: get_strong_buy_for_sector
+**Purpose:** Find stocks with strong buy recommendations in a specific sector
+**Parameters:** `sector` (str) - Sector name
+**Implementation:**
+```python
+@tool
+def get_strong_buy_for_sector(sector: str) -> list:
+    """Return the strong buy recommendation for a given sector"""
+    new_sector = '_'.join(sector.lower().split()).lower()
+    data = obb.equity.screener(provider='finviz', sector=new_sector,
+                                recommendation='buy')
+    return data.to_llm()
+```
+
+#### Tool: get_strong_buy_for_industry
+**Purpose:** Find stocks with strong buy recommendations in a specific industry
+**Parameters:** `industry` (str) - Industry name
+**Implementation:**
+```python
+@tool
+def get_strong_buy_for_industry(industry: str) -> list:
+    """Return the strong buy recommendation for a given industry"""
+    data = obb.equity.screener(provider='finviz', industry=industry,
+                                recommendation='buy')
+    return data.to_llm()
+```
+
+#### Tool: get_valuation_for_industries
+**Purpose:** Get valuation metrics (P/E, P/B, EV/EBITDA) for an industry
+**Parameters:** `input` (str) - Industry name
+**Returns:** JSON with valuation metrics
+**Implementation:**
+```python
+@tool
+def get_valuation_for_industries(input: str) -> list:
+    """Return valuation metrics for the industry provided as input"""
+    data = obb.equity.compare.groups(group='industry', metric='valuation',
+                                     provider='finviz').to_df()
+    filtered = data[data.name == input]
+    return filtered.to_json(orient="records", date_format="iso", date_unit="s")
+```
+
+#### Tool: get_candidate_stocks_to_invest_relaxed
+**Purpose:** Screen for investment candidates using relaxed criteria
+**Parameters:** `industry` (str) - Industry name
+**Screening Criteria:**
+- Market Cap: Over $300M
+- Average Volume: Over 200K
+- Institutional Ownership: Under 60%
+- Current Ratio: Over 1.5
+- Debt/Equity: Over 0.3
+
+**Implementation:**
+```python
+@tool
+def get_candidate_stocks_to_invest_relaxed(industry: str) -> list:
+    '''Use relaxed criteria to find best companies in an industry
+    which are worth investing into'''
+    desc_filters = {
+        'Market Cap.': '+Small (over $300mln)',
+        'Average Volume': 'Over 200K',
+    }
+    fund_filters = {
+        'InstitutionalOwnership': 'Under 60%',
+        'Current Ratio': 'Over 1.5',
+        'Debt/Equity': 'Over 0.3',
+    }
+    desc_filters.update(fund_filters)
+
+    try:
+        data = obb.equity.screener(provider='finviz', industry=industry,
+                                   filters_dict=desc_filters)
+        return data.to_llm()
+    except Exception as e:
+        logging.info(f'No data found:{str(e)}')
+        return []
+```
+
+#### Tool: get_consensus
+**Purpose:** Get analyst consensus and price targets for a stock
+**Parameters:** `ticker` (str) - Stock ticker symbol
+**Returns:** JSON with target_high, target_low, target_consensus, target_median
+**Implementation:**
+```python
+@tool
+def get_consensus(ticker: str) -> list:
+    """Return analyst consensus for the ticker provided
+    It returns the following fields:
+    - target_high: float, High target of the price target consensus.
+    - target_low: float Low target of the price target consensus.
+    - target_consensus: float Consensus target of the price target consensus.
+    - target_median: float Median target of the price target consensus
+    """
+    data = obb.equity.estimates.consensus(symbol=ticker, limit=3,
+                                          provider='yfinance').to_df()
+    return data.to_json(orient="records", date_format="iso", date_unit="s")
+```
+
+### 3. Chain-of-Thought Workflow Example
+
+**Purpose:** Multi-step industry and stock analysis using sequential reasoning
+
+**User Prompt:**
+```python
+input1 = '''
+First, find an industry that has consistently shown positive performance across
+quarterly, monthly, and weekly timeframes.
+Second, once you have identified the industry, extract its relevant valuation
+metrics (e.g., P/E, P/B, EV/EBITDA).
+Third, extract companies from the selected industry using relaxed criteria.
+Fourth, for the best performing companies get the analyst consensus
+Finally, summarize your findings in no more than 80 words detailing:
+- Best performing industry
+- Best performing companies in industry
+- A table displaying the analyst consensus for each of the companies you
+  found at previous step
+'''
+```
+
+**Workflow Steps:**
+1. Call `get_industry_performance()` - Find consistently positive industry
+2. Call `get_valuation_for_industries(industry)` - Extract valuation metrics
+3. Call `get_candidate_stocks_to_invest_relaxed(industry)` - Screen companies
+4. Call `get_consensus(ticker)` for each top company - Get analyst targets
+5. Synthesize and summarize findings in structured format
+
+**Agent Execution:**
+```python
+result = agent_executor.invoke({"input": input1, "chat_history": chat_history})
+print(result['output'])
+```
+
+### 4. Sector Analysis Workflow Example
+
+**Purpose:** Find and analyze strong buy recommendations in a specific sector
+
+**User Prompt:**
+```python
+input1 = '''
+First, find the stocks recommended for strong buy in the Utilities Sector
+Second, find the valuation metrics for this stock.
+Third, summarize your findings in a short paragraph.
+'''
+```
+
+**Workflow Steps:**
+1. Call `get_strong_buy_for_sector("Utilities")` - Get strong buy stocks
+2. Call `get_valuation_for_industries("Utilities")` - Get sector valuation
+3. Synthesize data into paragraph summary
+
+**Agent Execution:**
+```python
+result = agent_executor.invoke({"input": input1, "chat_history": chat_history})
+print(result['output'])
+```
+
+### 5. Conversation Memory Configuration
+
+**Purpose:** Maintain conversation context across multiple interactions
+
+**Configuration:**
+```python
+from langchain.memory import ConversationTokenBufferMemory
+
+MEMORY_KEY = "chat_history"
+memory = ConversationTokenBufferMemory(
+    llm=llm,                    # Required for token counting
+    max_token_limit=16000,      # Leave buffer for functions + responses
+    memory_key="chat_history",  # Must match prompt's key
+    return_messages=True
+)
+```
+
+**Benefits:**
+- Tracks conversation history
+- Prevents context overflow (16K token limit)
+- Enables multi-turn conversations
+- Allows agent to reference previous findings
+
+---
+
+## Summary
+
+OpenBB provides three main categories of AI prompts:
+
+1. **Development & Operations**
+   - Changelog summarization for release automation
+
+2. **MCP Server Integration** (Primary AI Interface)
+   - System prompts for agent configuration
+   - Server prompts for pre-built workflows
+   - Inline prompts for endpoint-specific guidance
+   - Template rendering system for dynamic content
+
+3. **LangChain Integration** (Example Implementation)
+   - System prompt for researcher persona
+   - Custom tool definitions with OpenBB data
+   - Chain-of-thought workflow examples
+   - Conversation memory management
+
+All prompts are designed to guide AI agents through complex financial analysis tasks while maintaining efficiency, accuracy, and proper tool usage patterns.
